@@ -30,6 +30,9 @@ export function App() {
     total,
     loading,
     error,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
   } = useAssets({
     q: debouncedQ,
     status,
@@ -126,6 +129,9 @@ export function App() {
           activeId={activeId}
           onToggleSelect={toggleSelect}
           onOpen={setActiveId}
+          hasNextPage={hasNextPage}
+          isFetchingNextPage={isFetchingNextPage}
+          onLoadMore={() => fetchNextPage()}
         />
         {activeId && (
           <AssetDetail id={activeId} onClose={() => setActiveId(null)} onSaved={handleSaved} />

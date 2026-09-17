@@ -274,7 +274,7 @@ button:disabled {
   }
 }
 
-/* New tailwind classes */
+/* New classes */
 
 @layer base {
   html {
@@ -311,4 +311,22 @@ button:disabled {
   :focus-visible {
     @apply outline-2 outline-offset-2 outline-sky-600;
   }
+}
+
+.asset-grid-container {
+  height: calc(100vh - 140px);
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 24px;
+}
+
+.load-more-sentinel {
+  height: 1px;
+  width: 100%;
+}
+
+.load-more-status {
+  padding: 16px;
+  text-align: center;
 }
