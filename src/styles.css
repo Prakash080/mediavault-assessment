@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --ink: #1b1d21;
   --ink-soft: #62676f;
@@ -267,5 +271,44 @@ button:disabled {
     width: 100%;
     border-left: none;
     border-top: 1px solid var(--line);
+  }
+}
+
+/* New tailwind classes */
+
+@layer base {
+  html {
+    font-family:
+      Inter,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased;
+    margin: 0;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-sky-600;
   }
 }
