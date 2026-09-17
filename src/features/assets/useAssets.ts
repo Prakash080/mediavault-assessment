@@ -1,48 +1,62 @@
-import { useEffect, useState } from 'react';
+import { useInfiniteQuery } from '@tanstack/react-query';
+
 import { listAssets } from '@/api/client';
-import type { Asset, AssetQuery } from '@/lib/types';
+import type { AssetQuery } from '@/lib/types';
 
-interface State {
-  items: Asset[];
-  total: number;
-  nextCursor: string | null;
-  loading: boolean;
-  error: string | null;
-}
-
-/**
- * Baseline loader. Reviewers know this hook is wrong in several ways.
- * Replacing it wholesale is expected and encouraged.
- */
 export function useAssets(query: AssetQuery) {
-  const [state, setState] = useState<State>({
-    items: [],
-    total: 0,
-    nextCursor: null,
-    loading: true,
-    error: null,
+  const queryKey = [
+    'assets',
+    {
+      q: query.q ?? '',
+      status: query.status ?? [],
+      kind: query.kind ?? [],
+      tag: query.tag ?? [],
+      collectionId: query.collectionId ?? '',
+      owner: query.owner ?? '',
+      sort: query.sort ?? '',
+      limit: query.limit ?? 24,
+    },
+  ];
+
+  const assetsQuery = useInfiniteQuery({
+    queryKey,
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) =>
+      listAssets(
+        {
+          ...query,
+          cursor: pageParam ?? undefined,
+        },
+        signal,
+      ),
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    staleTime: 30_000,
+    retry: false,
   });
 
-  useEffect(() => {
-    setState((s) => ({ ...s, loading: true, error: null }));
-    listAssets(query)
-      .then((page) => {
-        setState({
-          items: page.items,
-          total: page.total,
-          nextCursor: page.nextCursor,
-          loading: false,
-          error: null,
-        });
-      })
-      .catch((err: unknown) => {
-        setState((s) => ({
-          ...s,
-          loading: false,
-          error: err instanceof Error ? err.message : 'Something went wrong',
-        }));
-      });
-  }, [JSON.stringify(query)]);
+  const pages = assetsQuery.data?.pages ?? [];
+  const items = pages.flatMap((page) => page.items);
+  const total = pages[0]?.total ?? 0;
 
-  return state;
+  const nextCursor =
+    pages.length > 0
+      ? pages[pages.length - 1]?.nextCursor ?? null
+      : null;
+
+  return {
+    items,
+    total,
+    nextCursor,
+    loading: assetsQuery.isLoading,
+    error:
+      assetsQuery.error instanceof Error
+        ? assetsQuery.error.message
+        : assetsQuery.error
+          ? 'Something went wrong'
+          : null,
+    hasNextPage: assetsQuery.hasNextPage,
+    isFetchingNextPage: assetsQuery.isFetchingNextPage,
+    fetchNextPage: assetsQuery.fetchNextPage,
+    refetch: assetsQuery.refetch,
+  };
 }
