@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { bulkSetStatus } from '@/api/client';
 import { AssetDetail } from '@/features/assets/AssetDetail';
 import { AssetGrid } from '@/features/assets/AssetGrid';
@@ -40,14 +40,18 @@ export function App() {
     limit: 24,
   });
 
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
-  }
+  }, []);
 
   async function applyBulkStatus(next: AssetStatus) {
     const ids = [...selectedIds];
@@ -66,6 +70,10 @@ export function App() {
   function handleSaved(_asset: Asset) {
     // The list is not told that anything changed, so it shows stale rows.
   }
+
+  const handleLoadMore = useCallback(() => {
+    fetchNextPage();
+  }, [fetchNextPage]);
 
   return (
     <div className="app">
@@ -131,7 +139,7 @@ export function App() {
           onOpen={setActiveId}
           hasNextPage={hasNextPage}
           isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={() => fetchNextPage()}
+          onLoadMore={handleLoadMore}
         />
         {activeId && (
           <AssetDetail id={activeId} onClose={() => setActiveId(null)} onSaved={handleSaved} />
