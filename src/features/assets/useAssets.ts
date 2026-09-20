@@ -1,9 +1,16 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useCallback } from 'react';
+import {
+  useInfiniteQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 
 import { listAssets } from '@/api/client';
-import type { AssetQuery } from '@/lib/types';
+
+import type { Asset, AssetQuery } from '@/lib/types';
 
 export function useAssets(query: AssetQuery) {
+  const queryClient = useQueryClient();
+
   const queryKey = [
     'assets',
     {
@@ -29,13 +36,16 @@ export function useAssets(query: AssetQuery) {
         },
         signal,
       ),
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    getNextPageParam: (lastPage) =>
+      lastPage.nextCursor ?? undefined,
     staleTime: 30_000,
     retry: false,
   });
 
   const pages = assetsQuery.data?.pages ?? [];
+
   const items = pages.flatMap((page) => page.items);
+
   const total = pages[0]?.total ?? 0;
 
   const nextCursor =
@@ -43,20 +53,64 @@ export function useAssets(query: AssetQuery) {
       ? pages[pages.length - 1]?.nextCursor ?? null
       : null;
 
+  const updateAssetsInCache = useCallback(
+    (updatedAssets: Asset[]) => {
+      if (updatedAssets.length === 0) return;
+
+      const updates = new Map(
+        updatedAssets.map((asset) => [asset.id, asset]),
+      );
+
+      queryClient.setQueryData(
+        queryKey,
+        (current:
+          | {
+              pages: Array<{
+                items: Asset[];
+                total: number;
+                nextCursor: string | null;
+              }>;
+              pageParams: unknown[];
+            }
+          | undefined) => {
+          if (!current) return current;
+
+          return {
+            ...current,
+            pages: current.pages.map((page) => ({
+              ...page,
+              items: page.items.map(
+                (asset) => updates.get(asset.id) ?? asset,
+              ),
+            })),
+          };
+        },
+      );
+    },
+    [queryClient, queryKey],
+  );
+
   return {
     items,
     total,
     nextCursor,
+
     loading: assetsQuery.isLoading,
+
     error:
       assetsQuery.error instanceof Error
         ? assetsQuery.error.message
         : assetsQuery.error
           ? 'Something went wrong'
           : null,
+
     hasNextPage: assetsQuery.hasNextPage,
     isFetchingNextPage: assetsQuery.isFetchingNextPage,
+
     fetchNextPage: assetsQuery.fetchNextPage,
+
     refetch: assetsQuery.refetch,
+
+    updateAssetsInCache,
   };
 }
