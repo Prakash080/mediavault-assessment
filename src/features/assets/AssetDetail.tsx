@@ -1,4 +1,8 @@
-import { useEffect, useState } from 'react';
+import {
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 
 import {
   getAsset,
@@ -38,10 +42,22 @@ export function AssetDetail({
   onClose,
   onSaved,
 }: Props) {
-  const [asset, setAsset] = useState<Asset | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [conflict, setConflict] = useState(false);
+  const [asset, setAsset] =
+    useState<Asset | null>(null);
+
+  const [error, setError] =
+    useState<string | null>(null);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [conflict, setConflict] =
+    useState(false);
+
+  const closeButtonRef =
+    useRef<HTMLButtonElement | null>(
+      null,
+    );
 
   useEffect(() => {
     setAsset(null);
@@ -54,24 +70,67 @@ export function AssetDetail({
         setError(
           err instanceof Error
             ? err.message
-            : 'Load failed',
+            : 'Unable to load this asset.',
         );
       });
   }, [id]);
 
-  async function setStatus(status: AssetStatus) {
-    if (!asset) return;
+  /*
+   * Move focus into the detail panel as soon
+   * as it opens.
+   */
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      closeButtonRef.current?.focus();
+    });
+  }, [id]);
+
+  /*
+   * Escape closes the panel.
+   */
+  useEffect(() => {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      event.preventDefault();
+      onClose();
+    }
+
+    document.addEventListener(
+      'keydown',
+      handleKeyDown,
+    );
+
+    return () => {
+      document.removeEventListener(
+        'keydown',
+        handleKeyDown,
+      );
+    };
+  }, [onClose]);
+
+  async function setStatus(
+    status: AssetStatus,
+  ) {
+    if (!asset) {
+      return;
+    }
 
     setSaving(true);
     setError(null);
     setConflict(false);
 
     try {
-      const updated = await updateAsset(
-        asset.id,
-        asset.version,
-        { status },
-      );
+      const updated =
+        await updateAsset(
+          asset.id,
+          asset.version,
+          { status },
+        );
 
       setAsset(updated);
       onSaved(updated);
@@ -81,14 +140,18 @@ export function AssetDetail({
         err.status === 409
       ) {
         try {
-          const latest = await getAsset(asset.id);
+          const latest =
+            await getAsset(
+              asset.id,
+            );
 
           setAsset(latest);
           setConflict(true);
+
           setError(
             'This asset was changed by someone else. ' +
             'The latest version has been loaded. ' +
-            'Please review it before saving again.',
+            'Review it before saving again.',
           );
         } catch {
           setError(
@@ -103,7 +166,7 @@ export function AssetDetail({
       setError(
         err instanceof Error
           ? err.message
-          : 'Save failed',
+          : 'Unable to save the asset.',
       );
     } finally {
       setSaving(false);
@@ -111,11 +174,26 @@ export function AssetDetail({
   }
 
   return (
-    <aside className="panel">
+    <aside
+      className="panel"
+      aria-label={`Asset detail${
+        asset ? `: ${asset.name}` : ''
+      }`}
+    >
       <div className="panel__head">
-        <h2>Asset detail</h2>
+        <h2
+          id="asset-detail-title"
+          tabIndex={-1}
+        >
+          Asset detail
+        </h2>
 
-        <button onClick={onClose}>
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={onClose}
+          aria-label="Close asset detail"
+        >
           Close
         </button>
       </div>
@@ -134,8 +212,11 @@ export function AssetDetail({
       )}
 
       {!asset && !error && (
-        <p className="muted">
-          Loading…
+        <p
+          className="muted"
+          role="status"
+        >
+          Loading asset details…
         </p>
       )}
 
@@ -145,6 +226,15 @@ export function AssetDetail({
             className="panel__thumb"
             src={thumbnailUrl(asset.id)}
             alt=""
+            onError={(event) => {
+              event.currentTarget.style.visibility =
+                'hidden';
+
+              event.currentTarget.parentElement
+                ?.classList.add(
+                  'panel__thumb--missing',
+                );
+            }}
           />
 
           <h3>{asset.name}</h3>
@@ -158,33 +248,44 @@ export function AssetDetail({
 
             <dt>Size</dt>
             <dd>
-              {formatBytes(asset.sizeBytes)}
+              {formatBytes(
+                asset.sizeBytes,
+              )}
             </dd>
 
-            {asset.width && (
-              <>
-                <dt>Dimensions</dt>
-                <dd>
-                  {asset.width}×{asset.height}
-                </dd>
-              </>
-            )}
+            {asset.width !== null &&
+              asset.height !== null && (
+                <>
+                  <dt>Dimensions</dt>
+                  <dd>
+                    {asset.width}×
+                    {asset.height}
+                  </dd>
+                </>
+              )}
 
-            {asset.durationSec && (
+            {asset.durationSec !==
+              null && (
               <>
                 <dt>Duration</dt>
                 <dd>
-                  {formatDuration(asset.durationSec)}
+                  {formatDuration(
+                    asset.durationSec,
+                  )}
                 </dd>
               </>
             )}
 
             <dt>Owner</dt>
-            <dd>{asset.owner.name}</dd>
+            <dd>
+              {asset.owner.name}
+            </dd>
 
             <dt>Updated</dt>
             <dd>
-              {formatDate(asset.updatedAt)}
+              {formatDate(
+                asset.updatedAt,
+              )}
             </dd>
 
             <dt>Version</dt>
@@ -192,12 +293,17 @@ export function AssetDetail({
           </dl>
 
           {asset.tags.length > 0 && (
-            <ul className="tags">
-              {asset.tags.map((tag) => (
-                <li key={tag}>
-                  {tag}
-                </li>
-              ))}
+            <ul
+              className="tags"
+              aria-label="Asset tags"
+            >
+              {asset.tags.map(
+                (tag) => (
+                  <li key={tag}>
+                    {tag}
+                  </li>
+                ),
+              )}
             </ul>
           )}
 
@@ -205,21 +311,35 @@ export function AssetDetail({
             Status
           </p>
 
-          <div className="row">
-            {STATUSES.map((status) => (
-              <button
-                key={status}
-                disabled={
-                  saving ||
-                  status === asset.status
-                }
-                onClick={() =>
-                  setStatus(status)
-                }
-              >
-                {statusLabel(status)}
-              </button>
-            ))}
+          <div
+            className="row"
+            role="group"
+            aria-label="Change asset status"
+          >
+            {STATUSES.map(
+              (status) => (
+                <button
+                  key={status}
+                  type="button"
+                  disabled={
+                    saving ||
+                    status ===
+                      asset.status
+                  }
+                  aria-pressed={
+                    status ===
+                    asset.status
+                  }
+                  onClick={() =>
+                    setStatus(status)
+                  }
+                >
+                  {statusLabel(
+                    status,
+                  )}
+                </button>
+              ),
+            )}
           </div>
         </div>
       )}

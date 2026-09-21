@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useState,
 } from 'react';
@@ -32,7 +33,17 @@ import type {
   AssetQuery,
 } from '@/lib/types';
 
-import { useDebounce } from '@/hooks/useDebounce';
+import {
+  ApiError,
+} from '@/api/errors';
+
+import {
+  useDebounce,
+} from '@/hooks/useDebounce';
+
+import {
+  useOnlineStatus,
+} from '@/hooks/useOnlineStatus';
 
 const STATUSES: AssetStatus[] = [
   'draft',
@@ -42,7 +53,9 @@ const STATUSES: AssetStatus[] = [
 ];
 
 const SORTS: Array<{
-  value: NonNullable<AssetQuery['sort']>;
+  value: NonNullable<
+    AssetQuery['sort']
+  >;
   label: string;
 }> = [
     {
@@ -64,19 +77,29 @@ const SORTS: Array<{
   ];
 
 export function App() {
-  const [q, setQ] = useState('');
-  const debouncedQ = useDebounce(q, 300);
+  const [q, setQ] =
+    useState('');
+
+  const debouncedQ =
+    useDebounce(q, 300);
+
+  const online =
+    useOnlineStatus();
 
   const [status, setStatus] =
     useState<AssetStatus[]>([]);
 
   const [sort, setSort] =
     useState<
-      NonNullable<AssetQuery['sort']>
+      NonNullable<
+        AssetQuery['sort']
+      >
     >('updatedAt:desc');
 
   const [selectedIds, setSelectedIds] =
-    useState<Set<string>>(new Set());
+    useState<Set<string>>(
+      new Set(),
+    );
 
   const [lastSelectedId, setLastSelectedId] =
     useState<string | null>(null);
@@ -116,6 +139,7 @@ export function App() {
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
+    refetch,
     updateAssetsInCache,
   } = useAssets({
     q: debouncedQ,
@@ -123,6 +147,39 @@ export function App() {
     sort,
     limit: 24,
   });
+
+  const [resultAnnouncement, setResultAnnouncement] =
+    useState('');
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    setResultAnnouncement(
+      `${total.toLocaleString()} assets found. ` +
+      `${items.length.toLocaleString()} currently loaded.`,
+    );
+  }, [
+    loading,
+    total,
+    items.length,
+  ]);
+
+  /*
+   * When connectivity comes back, refresh the
+   * current result set.
+   */
+  useEffect(() => {
+    if (!online) {
+      return;
+    }
+
+    void refetch();
+    // We only want to react to the browser
+    // transitioning back online.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [online]);
 
   const assetMap = useMemo(
     () =>
@@ -138,228 +195,300 @@ export function App() {
   const allLoadedSelected =
     items.length > 0 &&
     items.every((asset) =>
-      selectedIds.has(asset.id),
+      selectedIds.has(
+        asset.id,
+      ),
     );
 
-  const toggleSelect = useCallback(
-    (id: string) => {
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
+  const toggleSelect =
+    useCallback(
+      (id: string) => {
+        setSelectedIds(
+          (prev) => {
+            const next =
+              new Set(prev);
 
-        if (next.has(id)) {
-          next.delete(id);
-        } else {
-          next.add(id);
-        }
+            if (
+              next.has(id)
+            ) {
+              next.delete(id);
+            } else {
+              next.add(id);
+            }
 
-        return next;
-      });
+            return next;
+          },
+        );
 
-      setLastSelectedId(id);
-    },
-    [],
-  );
-
-  const selectRange = useCallback(
-    (fromId: string, toId: string) => {
-      const fromIndex = items.findIndex(
-        (asset) => asset.id === fromId,
-      );
-
-      const toIndex = items.findIndex(
-        (asset) => asset.id === toId,
-      );
-
-      if (
-        fromIndex === -1 ||
-        toIndex === -1
-      ) {
-        toggleSelect(toId);
-        return;
-      }
-
-      const start = Math.min(
-        fromIndex,
-        toIndex,
-      );
-
-      const end = Math.max(
-        fromIndex,
-        toIndex,
-      );
-
-      setSelectedIds((prev) => {
-        const next = new Set(prev);
-
-        for (
-          let index = start;
-          index <= end;
-          index += 1
-        ) {
-          const asset = items[index];
-          if (asset) {
-            next.add(asset.id);
-          }
-        }
-
-        return next;
-      });
-
-      setLastSelectedId(toId);
-    },
-    [items, toggleSelect],
-  );
-
-  const selectAllLoaded = useCallback(() => {
-    setSelectedIds(
-      new Set(items.map((asset) => asset.id)),
+        setLastSelectedId(id);
+      },
+      [],
     );
 
-    setLastSelectedId(
-      items[items.length - 1]?.id ?? null,
-    );
-  }, [items]);
-
-  const clearSelection = useCallback(() => {
-    setSelectedIds(new Set());
-    setLastSelectedId(null);
-  }, []);
-
-  const performBulkStatus = useCallback(
-    async (
-      nextStatus: AssetStatus,
-      idsToUpdate: string[],
-    ) => {
-      if (idsToUpdate.length === 0) {
-        return;
-      }
-      setLastBulkStatus(nextStatus);
-      setBulkStatus(nextStatus);
-      setBulkError(null);
-      setNotice(null);
-      setBulkFailures([]);
-      setRetryableFailures([]);
-
-      const originalAssets = idsToUpdate
-        .map((id) => assetMap.get(id))
-        .filter(
-          (asset): asset is Asset =>
-            Boolean(asset),
-        );
-
-      const optimisticAssets =
-        originalAssets.map((asset) => ({
-          ...asset,
-          status: nextStatus,
-        }));
-
-      // Optimistic update.
-      updateAssetsInCache(
-        optimisticAssets,
-      );
-
-      try {
-        const result =
-          await runBulkStatusUpdate(
-            idsToUpdate,
-            nextStatus,
-            {
-              onProgress: setBulkProgress,
-            },
-          );
-
-        // Successful server responses are
-        // authoritative.
-        updateAssetsInCache(
-          result.assets,
-        );
-
-        // Roll back failed assets individually.
-        const failedIds = new Set(
-          result.failures.map(
-            (failure) => failure.id,
-          ),
-        );
-
-        const rollbackAssets =
-          originalAssets.filter(
+  const selectRange =
+    useCallback(
+      (
+        fromId: string,
+        toId: string,
+      ) => {
+        const fromIndex =
+          items.findIndex(
             (asset) =>
-              failedIds.has(asset.id),
+              asset.id ===
+              fromId,
           );
 
-        updateAssetsInCache(
-          rollbackAssets,
-        );
-
-        setBulkFailures(
-          result.failures,
-        );
-
-        const retryable =
-          getRetryableFailures(
-            result.failures,
+        const toIndex =
+          items.findIndex(
+            (asset) =>
+              asset.id ===
+              toId,
           );
-
-        setRetryableFailures(
-          retryable,
-        );
-
-        setNotice(
-          `${result.applied} updated, ` +
-          `${result.failures.length} failed.`,
-        );
 
         if (
-          result.failures.length === 0
+          fromIndex === -1 ||
+          toIndex === -1
         ) {
-          clearSelection();
-        } else {
-          setSelectedIds(
+          toggleSelect(toId);
+          return;
+        }
+
+        const start =
+          Math.min(
+            fromIndex,
+            toIndex,
+          );
+
+        const end =
+          Math.max(
+            fromIndex,
+            toIndex,
+          );
+
+        setSelectedIds(
+          (prev) => {
+            const next =
+              new Set(prev);
+
+            for (
+              let index =
+                start;
+              index <= end;
+              index += 1
+            ) {
+              const asset =
+                items[index];
+
+              if (asset) {
+                next.add(
+                  asset.id,
+                );
+              }
+            }
+
+            return next;
+          },
+        );
+
+        setLastSelectedId(
+          toId,
+        );
+      },
+      [items, toggleSelect],
+    );
+
+  const selectAllLoaded =
+    useCallback(() => {
+      setSelectedIds(
+        new Set(
+          items.map(
+            (asset) =>
+              asset.id,
+          ),
+        ),
+      );
+
+      setLastSelectedId(
+        items[
+          items.length - 1
+        ]?.id ?? null,
+      );
+    }, [items]);
+
+  const clearSelection =
+    useCallback(() => {
+      setSelectedIds(
+        new Set(),
+      );
+
+      setLastSelectedId(
+        null,
+      );
+    }, []);
+
+  const performBulkStatus =
+    useCallback(
+      async (
+        nextStatus: AssetStatus,
+        idsToUpdate: string[],
+      ) => {
+        if (
+          idsToUpdate.length ===
+          0
+        ) {
+          return;
+        }
+
+        setLastBulkStatus(
+          nextStatus,
+        );
+
+        setBulkStatus(
+          nextStatus,
+        );
+
+        setBulkError(null);
+        setNotice(null);
+        setBulkFailures([]);
+        setRetryableFailures([]);
+
+        const originalAssets =
+          idsToUpdate
+            .map((id) =>
+              assetMap.get(id),
+            )
+            .filter(
+              (
+                asset,
+              ): asset is Asset =>
+                Boolean(asset),
+            );
+
+        const optimisticAssets =
+          originalAssets.map(
+            (asset) => ({
+              ...asset,
+              status:
+                nextStatus,
+            }),
+          );
+
+        updateAssetsInCache(
+          optimisticAssets,
+        );
+
+        try {
+          const result =
+            await runBulkStatusUpdate(
+              idsToUpdate,
+              nextStatus,
+              {
+                onProgress:
+                  setBulkProgress,
+              },
+            );
+
+          updateAssetsInCache(
+            result.assets,
+          );
+
+          const failedIds =
             new Set(
               result.failures.map(
                 (failure) =>
                   failure.id,
               ),
-            ),
-          );
-        }
-      } catch (err) {
-        // If the complete operation itself fails,
-        // restore every optimistically updated asset.
-        updateAssetsInCache(
-          originalAssets,
-        );
+            );
 
-        if (
-          err instanceof DOMException &&
-          err.name === 'AbortError'
-        ) {
-          setBulkError(
-            'Bulk update was cancelled.',
+          const rollbackAssets =
+            originalAssets.filter(
+              (asset) =>
+                failedIds.has(
+                  asset.id,
+                ),
+            );
+
+          updateAssetsInCache(
+            rollbackAssets,
           );
-        } else {
-          setBulkError(
-            err instanceof Error
-              ? err.message
-              : 'Bulk update failed.',
+
+          setBulkFailures(
+            result.failures,
           );
+
+          const retryable =
+            getRetryableFailures(
+              result.failures,
+            );
+
+          setRetryableFailures(
+            retryable,
+          );
+
+          setNotice(
+            `${result.applied} updated, ` +
+            `${result.failures.length} failed.`,
+          );
+
+          if (
+            result.failures.length ===
+            0
+          ) {
+            clearSelection();
+          } else {
+            setSelectedIds(
+              new Set(
+                result.failures.map(
+                  (failure) =>
+                    failure.id,
+                ),
+              ),
+            );
+          }
+        } catch (err) {
+          updateAssetsInCache(
+            originalAssets,
+          );
+
+          if (
+            err instanceof DOMException &&
+            err.name ===
+            'AbortError'
+          ) {
+            setBulkError(
+              'Bulk update was cancelled.',
+            );
+          } else if (
+            err instanceof ApiError
+          ) {
+            setBulkError(
+              err.userMessage,
+            );
+          } else {
+            setBulkError(
+              err instanceof Error
+                ? err.message
+                : 'Bulk update failed. Please try again.',
+            );
+          }
+        } finally {
+          setBulkStatus(null);
+          setBulkProgress(null);
         }
-      } finally {
-        setBulkStatus(null);
-        setBulkProgress(null);
-      }
-    },
-    [
-      assetMap,
-      clearSelection,
-      updateAssetsInCache,
-    ],
-  );
+      },
+      [
+        assetMap,
+        clearSelection,
+        updateAssetsInCache,
+      ],
+    );
 
   async function applyBulkStatus(
     nextStatus: AssetStatus,
   ) {
-    const ids = [...selectedIds];
+    const ids = [
+      ...selectedIds,
+    ];
 
     await performBulkStatus(
       nextStatus,
@@ -368,13 +497,19 @@ export function App() {
   }
 
   async function retryFailed() {
-    if (!lastBulkStatus || retryableFailures.length === 0) {
+    if (
+      !lastBulkStatus ||
+      retryableFailures.length ===
+      0
+    ) {
       return;
     }
 
-    const ids = retryableFailures.map(
-      (failure) => failure.id,
-    );
+    const ids =
+      retryableFailures.map(
+        (failure) =>
+          failure.id,
+      );
 
     await performBulkStatus(
       lastBulkStatus,
@@ -382,28 +517,63 @@ export function App() {
     );
   }
 
-  function handleSaved(asset: Asset) {
-    updateAssetsInCache([asset]);
+  function handleSaved(
+    asset: Asset,
+  ) {
+    updateAssetsInCache([
+      asset,
+    ]);
   }
 
-  const handleLoadMore = useCallback(
-    () => {
+  const handleLoadMore =
+    useCallback(() => {
       if (
         hasNextPage &&
         !isFetchingNextPage
       ) {
         fetchNextPage();
       }
-    },
-    [
+    }, [
       fetchNextPage,
       hasNextPage,
       isFetchingNextPage,
-    ],
-  );
+    ]);
+
+  const displayError =
+    error
+      ? error
+      : null;
 
   return (
     <div className="app">
+      {!online && (
+        <div
+          className="offline-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <strong>
+            You are offline.
+          </strong>{' '}
+          Requests are paused until
+          your connection returns.
+        </div>
+      )}
+
+      {online &&
+        notice?.includes(
+          'connection',
+        ) && (
+          <div
+            className="online-banner"
+            role="status"
+          >
+            Connection restored.
+            Refreshing the latest
+            assets…
+          </div>
+        )}
+
       <header className="topbar">
         <h1>MediaVault</h1>
 
@@ -412,67 +582,97 @@ export function App() {
           type="search"
           placeholder="Search assets"
           value={q}
+          disabled={!online}
           onChange={(event) =>
-            setQ(event.target.value)
+            setQ(
+              event.target.value,
+            )
           }
         />
 
         <select
           value={sort}
+          disabled={!online}
           onChange={(event) =>
             setSort(
-              event.target.value as typeof sort,
+              event.target
+                .value as typeof sort,
             )
           }
         >
-          {SORTS.map((option) => (
-            <option
-              key={option.value}
-              value={option.value}
-            >
-              {option.label}
-            </option>
-          ))}
+          {SORTS.map(
+            (option) => (
+              <option
+                key={
+                  option.value
+                }
+                value={
+                  option.value
+                }
+              >
+                {option.label}
+              </option>
+            ),
+          )}
         </select>
       </header>
 
       <div className="filters">
-        {STATUSES.map((currentStatus) => (
-          <label
-            key={currentStatus}
-          >
-            <input
-              type="checkbox"
-              checked={status.includes(
+        {STATUSES.map(
+          (currentStatus) => (
+            <label
+              key={
+                currentStatus
+              }
+            >
+              <input
+                type="checkbox"
+                checked={status.includes(
+                  currentStatus,
+                )}
+                disabled={!online}
+                onChange={(
+                  event,
+                ) =>
+                  setStatus(
+                    (previous) =>
+                      event.target
+                        .checked
+                        ? [
+                          ...previous,
+                          currentStatus,
+                        ]
+                        : previous.filter(
+                          (
+                            value,
+                          ) =>
+                            value !==
+                            currentStatus,
+                        ),
+                  )
+                }
+              />
+
+              {statusLabel(
                 currentStatus,
               )}
-              onChange={(event) =>
-                setStatus((previous) =>
-                  event.target.checked
-                    ? [
-                      ...previous,
-                      currentStatus,
-                    ]
-                    : previous.filter(
-                      (value) =>
-                        value !==
-                        currentStatus,
-                    ),
-                )
-              }
-            />
-
-            {statusLabel(
-              currentStatus,
-            )}
-          </label>
-        ))}
+            </label>
+          ),
+        )}
 
         <span className="muted">
           {loading
             ? 'Loading…'
             : `${items.length} of ${total.toLocaleString()} shown`}
         </span>
+
+        <div
+          className="sr-only"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {resultAnnouncement}
+        </div>
       </div>
 
       {items.length > 0 && (
@@ -490,54 +690,69 @@ export function App() {
               : `Select all ${items.length} loaded`}
           </button>
 
-          {selectedIds.size > 0 && (
-            <span className="muted">
-              {selectedIds.size} selected
-            </span>
-          )}
+          {selectedIds.size >
+            0 && (
+              <span className="muted">
+                {
+                  selectedIds.size
+                }{' '}
+                selected
+              </span>
+            )}
         </div>
       )}
 
-      {selectedIds.size > 0 && (
-        <div
-          className="bulkbar"
-          aria-live="polite"
-        >
-          <span>
-            {selectedIds.size} selected
-          </span>
-
-          {STATUSES.map(
-            (currentStatus) => (
-              <button
-                key={currentStatus}
-                disabled={
-                  bulkStatus !== null
-                }
-                onClick={() =>
-                  applyBulkStatus(
-                    currentStatus,
-                  )
-                }
-              >
-                Set{' '}
-                {statusLabel(
-                  currentStatus,
-                ).toLowerCase()}
-              </button>
-            ),
-          )}
-
-          <button
-            disabled={
-              bulkStatus !== null
-            }
-            onClick={clearSelection}
+      {selectedIds.size >
+        0 && (
+          <div
+            className="bulkbar"
+            aria-live="polite"
           >
-            Clear selection
-          </button>
-        </div>
-      )}
+            <span>
+              {
+                selectedIds.size
+              }{' '}
+              selected
+            </span>
+
+            {STATUSES.map(
+              (currentStatus) => (
+                <button
+                  key={
+                    currentStatus
+                  }
+                  disabled={
+                    bulkStatus !==
+                    null ||
+                    !online
+                  }
+                  onClick={() =>
+                    applyBulkStatus(
+                      currentStatus,
+                    )
+                  }
+                >
+                  Set{' '}
+                  {statusLabel(
+                    currentStatus,
+                  ).toLowerCase()}
+                </button>
+              ),
+            )}
+
+            <button
+              disabled={
+                bulkStatus !==
+                null
+              }
+              onClick={
+                clearSelection
+              }
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
 
       {bulkProgress &&
         bulkStatus && (
@@ -547,14 +762,21 @@ export function App() {
             aria-live="polite"
           >
             Updating{' '}
-            {bulkProgress.total}{' '}
+            {
+              bulkProgress.total
+            }{' '}
             assets to{' '}
             {statusLabel(
               bulkStatus,
             ).toLowerCase()}
             …{' '}
-            {bulkProgress.completed}/
-            {bulkProgress.total}
+            {
+              bulkProgress.completed
+            }
+            /
+            {
+              bulkProgress.total
+            }
           </div>
         )}
 
@@ -573,67 +795,86 @@ export function App() {
         </p>
       )}
 
-      {bulkFailures.length > 0 && (
-        <div
-          className="bulk-results"
-          role="status"
-        >
-          <strong>
-            Some assets could not be updated
-          </strong>
+      {bulkFailures.length >
+        0 && (
+          <div
+            className="bulk-results"
+            role="status"
+          >
+            <strong>
+              Some assets could not
+              be updated
+            </strong>
 
-          <ul>
-            {bulkFailures.map(
-              (failure) => {
-                const asset =
-                  assetMap.get(
-                    failure.id,
+            <ul>
+              {bulkFailures.map(
+                (failure) => {
+                  const asset =
+                    assetMap.get(
+                      failure.id,
+                    );
+
+                  return (
+                    <li
+                      key={
+                        failure.id
+                      }
+                    >
+                      <strong>
+                        {asset?.name ??
+                          failure.id}
+                      </strong>
+                      {' — '}
+                      {
+                        failure.message
+                      }
+                    </li>
                   );
+                },
+              )}
+            </ul>
 
-                return (
-                  <li key={failure.id}>
-                    <strong>
-                      {asset?.name ??
-                        failure.id}
-                    </strong>
-                    {' — '}
-                    {failure.message}
-                  </li>
-                );
-              },
-            )}
-          </ul>
+            {retryableFailures.length >
+              0 && (
+                <button
+                  type="button"
+                  disabled={
+                    bulkStatus !==
+                    null
+                  }
+                  onClick={() => {
+                    void retryFailed();
+                  }}
+                >
+                  Retry{' '}
+                  {
+                    retryableFailures.length
+                  }{' '}
+                  retryable failures
+                </button>
+              )}
+          </div>
+        )}
 
-          {retryableFailures.length >
-            0 && (
-              <button
-                type="button"
-                disabled={bulkStatus !== null}
-                onClick={() => {
-                  void retryFailed();
-                }}
-              >
-                Retry {retryableFailures.length} retryable failures
-              </button>
-            )}
-        </div>
-      )}
-
-      {error && (
+      {displayError && (
         <p
           className="error"
           role="alert"
         >
-          {error}
+          {displayError}
         </p>
       )}
 
       <main className="content">
         <AssetGrid
           assets={items}
-          selectedIds={selectedIds}
+          selectedIds={
+            selectedIds
+          }
           activeId={activeId}
-          onToggleSelect={toggleSelect}
+          onToggleSelect={
+            toggleSelect
+          }
           onRangeSelect={(
             fromId,
             toId,
@@ -644,8 +885,12 @@ export function App() {
               toId,
             );
           }}
-          onOpen={setActiveId}
-          hasNextPage={hasNextPage}
+          onOpen={
+            setActiveId
+          }
+          hasNextPage={
+            hasNextPage
+          }
           isFetchingNextPage={
             isFetchingNextPage
           }
@@ -660,7 +905,9 @@ export function App() {
             onClose={() =>
               setActiveId(null)
             }
-            onSaved={handleSaved}
+            onSaved={
+              handleSaved
+            }
           />
         )}
       </main>
